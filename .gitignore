@@ -25,6 +25,8 @@ backend/.mypy_cache/
 backend/.ruff_cache/
 backend/*.sqlite3
 backend/*.db
+backend/data/*.sqlite3
+backend/data/*.db
 
 # Node frontend
 frontend/node_modules/

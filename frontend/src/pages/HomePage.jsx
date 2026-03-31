@@ -21,14 +21,17 @@ const cards = [
 export default function HomePage() {
   return (
     <section>
-      <h1>AI 求职助手</h1>
-      <p className="muted">先做 MVP：先跑通核心链路，再逐步接入真实大模型。</p>
+      <div className="hero-panel">
+        <p className="hero-tag">AI CAREER STUDIO</p>
+        <h1>AI 求职助手</h1>
+        <p className="muted">从简历优化到模拟面试，帮你把求职准备变成可复用流程。</p>
+      </div>
       <div className="card-grid">
         {cards.map((card) => (
           <Link key={card.title} className="feature-card" to={card.to}>
             <h3>{card.title}</h3>
             <p>{card.desc}</p>
-            <span>进入功能</span>
+            <span className="enter-link">进入功能 →</span>
           </Link>
         ))}
       </div>

@@ -1,2 +1,8 @@
 fastapi
 uvicorn
+httpx
+python-dotenv
+python-multipart
+pypdf
+python-docx
+langchain-openai
