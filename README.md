@@ -23,7 +23,10 @@ uvicorn main:app --reload --port 8000
 DEEPSEEK_API_KEY=你的key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
+INTERVIEW_PROMPT_DEBUG=false
 ```
+
+如需查看模拟面试最终注入的 prompt 片段，可将 `INTERVIEW_PROMPT_DEBUG=true`，并在前端开启“调试 RAG”开关。
 
 ## 2) 启动前端
 

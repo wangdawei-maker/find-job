@@ -13,6 +13,7 @@ const INITIAL_ASSISTANT_MESSAGE = {
   score: null,
   strengths: [],
   improvements: [],
+  replyKind: 'answer',
 }
 
 export default function InterviewPage() {
@@ -24,6 +25,7 @@ export default function InterviewPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [debugRag, setDebugRag] = useState(false)
+  const [forceAskInterviewer, setForceAskInterviewer] = useState(false)
   const [messages, setMessages] = useState([INITIAL_ASSISTANT_MESSAGE])
 
   const loadSessions = async ({ reset = false } = {}) => {
@@ -50,7 +52,14 @@ export default function InterviewPage() {
     try {
       const data = await getInterviewHistory(sid)
       setJobTitle(data.job_title || 'AI 应用开发工程师')
-      setMessages(data.messages?.length ? data.messages : [INITIAL_ASSISTANT_MESSAGE])
+      setMessages(
+        data.messages?.length
+          ? data.messages.map((m) => ({
+              ...m,
+              replyKind: m.reply_kind || 'answer',
+            }))
+          : [INITIAL_ASSISTANT_MESSAGE],
+      )
     } catch {
       setMessages([INITIAL_ASSISTANT_MESSAGE])
     }
@@ -88,6 +97,7 @@ export default function InterviewPage() {
         nextMessages,
         sessionId || undefined,
         debugRag,
+        forceAskInterviewer,
       )
       if (data.session_id && data.session_id !== sessionId) {
         setSessionId(data.session_id)
@@ -104,8 +114,10 @@ export default function InterviewPage() {
           strengths: data.strengths || [],
           improvements: data.improvements || [],
           ragSources: data.rag_sources || [],
+          replyKind: data.turn_mode || 'answer',
         },
       ])
+      setForceAskInterviewer(false)
     } finally {
       setLoading(false)
     }
@@ -140,6 +152,14 @@ export default function InterviewPage() {
           />
           显示RAG来源
         </label>
+        <label className="debug-toggle" title="勾选后本句强制视为向面试官追问，不评分">
+          <input
+            type="checkbox"
+            checked={forceAskInterviewer}
+            onChange={(e) => setForceAskInterviewer(e.target.checked)}
+          />
+          本句追问面试官
+        </label>
       </div>
       {hasMoreSessions && (
         <button type="button" onClick={() => loadSessions()} className="load-more-btn">
@@ -152,7 +172,15 @@ export default function InterviewPage() {
           <div key={idx} className={`chat-row ${msg.role}`}>
             <div className="bubble">
               <p>{msg.content}</p>
-              {msg.role === 'assistant' && msg.score !== null && (
+              {msg.role === 'assistant' && msg.replyKind === 'ask_interviewer' && (
+                <div className="interview-ask-meta">
+                  <p className="interview-ask-badge">追问答复（未评分）</p>
+                  {msg.ragSources?.length > 0 && (
+                    <p className="muted">来源：{msg.ragSources.join('；')}</p>
+                  )}
+                </div>
+              )}
+              {msg.role === 'assistant' && msg.replyKind === 'answer' && msg.score !== null && (
                 <div className="interview-feedback">
                   <p>
                     本轮评分：<strong>{msg.score}</strong>/100
@@ -173,7 +201,11 @@ export default function InterviewPage() {
         <textarea
           className="chat-textarea"
           rows={3}
-          placeholder="输入你的回答..."
+          placeholder={
+            forceAskInterviewer
+              ? '向面试官提问（岗位、团队、流程等）...'
+              : '输入你的回答；短句带问号也可能被识别为追问'
+          }
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {

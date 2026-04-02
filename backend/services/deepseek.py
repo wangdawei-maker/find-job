@@ -1,3 +1,10 @@
+"""
+DeepSeek 聊天补全封装。
+
+从环境变量读取 ``DEEPSEEK_API_KEY``、``DEEPSEEK_BASE_URL``、``DEEPSEEK_MODEL``，
+使用与 OpenAI Chat Completions 兼容的 HTTP 接口调用模型。
+"""
+
 import json
 import os
 import re
@@ -7,22 +14,50 @@ from fastapi import HTTPException
 
 
 def extract_json_obj(text: str) -> dict:
-    # DeepSeek 有时会返回 ```json ... ``` 包裹的内容，先尝试提取 fenced JSON
+    """
+    从模型返回的字符串中解析出第一个 JSON 对象。
+
+    兼容：`` ```json ... ``` `` 代码块、正文中的 ``{...}``、或整段即为 JSON。
+
+    Args:
+        text: 模型原始输出文本。
+
+    Returns:
+        解析后的 ``dict``。
+
+    Raises:
+        json.JSONDecodeError: 无法解析为 JSON 时由 ``json.loads`` 抛出。
+    """
     fence_match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fence_match:
         return json.loads(fence_match.group(1))
 
-    # 否则尝试在整段文本里抓第一个 JSON 对象
     obj_match = re.search(r"\{.*\}", text, re.DOTALL)
     if obj_match:
         return json.loads(obj_match.group(0))
 
-    # 最后兜底：假设整个字符串就是 JSON
     return json.loads(text)
 
 
-def call_deepseek(messages: list[dict], temperature: float = 0.3, timeout_seconds: float | None = None) -> str:
-    # 从 .env 读取 DeepSeek 配置
+def call_deepseek(
+    messages: list[dict],
+    temperature: float = 0.3,
+    timeout_seconds: float | None = None,
+) -> str:
+    """
+    调用 DeepSeek Chat Completions，返回助手消息正文。
+
+    Args:
+        messages: OpenAI 格式的消息列表，每项含 ``role``、``content``。
+        temperature: 采样温度，越高越随机。
+        timeout_seconds: 请求超时（秒）；为 ``None`` 时使用 ``DEEPSEEK_TIMEOUT_SECONDS`` 环境变量，默认 40。
+
+    Returns:
+        模型回复的纯文本内容。
+
+    Raises:
+        HTTPException: 未配置 API Key、HTTP 错误或响应结构异常时抛出。
+    """
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
     model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
@@ -49,7 +84,6 @@ def call_deepseek(messages: list[dict], temperature: float = 0.3, timeout_second
         request_timeout = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "40"))
 
     try:
-        # 这里使用兼容 OpenAI Chat Completions 的请求格式
         with httpx.Client(timeout=request_timeout) as client:
             resp = client.post(endpoint, headers=headers, json=payload)
             resp.raise_for_status()

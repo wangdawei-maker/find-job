@@ -1,3 +1,9 @@
+"""
+简历诊断业务逻辑。
+
+将候选人经历文本交给 DeepSeek，解析为结构化建议列表。
+"""
+
 from fastapi import HTTPException
 
 from schemas import ResumeDiagnosisResponse
@@ -5,7 +11,15 @@ from services.deepseek import call_deepseek, extract_json_obj
 
 
 def build_resume_prompt(experience: str) -> str:
-    # 单独拆出 prompt 便于后续维护/迭代提示词
+    """
+    构造简历诊断的用户提示词。
+
+    Args:
+        experience: 候选人经历正文。
+
+    Returns:
+        发给模型的完整 prompt 字符串。
+    """
     return f"""
 你是资深求职顾问。请基于候选人经历给出简历优化建议。
 必须只输出 JSON 对象，格式如下：
@@ -23,7 +37,18 @@ def build_resume_prompt(experience: str) -> str:
 
 
 def resume_suggestions_from_text(experience: str) -> ResumeDiagnosisResponse:
-    # 把“文本 -> DeepSeek -> 解析 JSON -> 标准响应”封装成复用函数
+    """
+    根据经历文本生成简历优化建议。
+
+    Args:
+        experience: 简历或经历描述（已由上游限制长度时可切片）。
+
+    Returns:
+        ``ResumeDiagnosisResponse``，含 ``suggestions`` 列表（最多 6 条）。
+
+    Raises:
+        HTTPException: 模型返回无法解析或 ``suggestions`` 无效时，502。
+    """
     prompt = build_resume_prompt(experience)
     content = call_deepseek(
         [

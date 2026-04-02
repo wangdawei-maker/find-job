@@ -1,3 +1,9 @@
+"""
+岗位匹配业务逻辑。
+
+结合候选人经历、目标岗位与 JD，由模型输出匹配分数与优劣势要点。
+"""
+
 from fastapi import HTTPException
 
 from schemas import JobMatchRequest, JobMatchResponse
@@ -5,7 +11,18 @@ from services.deepseek import call_deepseek, extract_json_obj
 
 
 def job_match_with_llm(payload: JobMatchRequest) -> JobMatchResponse:
-    # 让模型直接输出结构化 JSON，前端可以直接渲染
+    """
+    使用 LLM 对候选人与 JD 做匹配分析。
+
+    Args:
+        payload: 含 ``experience``、``target_job``、``jd`` 的请求体。
+
+    Returns:
+        ``JobMatchResponse``：``score``（0-100）、``advantages``、``gaps``（各最多 5 条）。
+
+    Raises:
+        HTTPException: JSON 解析失败时 502。
+    """
     prompt = f"""
 你是招聘顾问，请根据候选人经历和岗位 JD 做匹配分析。
 必须只输出 JSON 对象，格式如下：

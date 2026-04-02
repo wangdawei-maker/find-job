@@ -1,3 +1,13 @@
+"""
+使用 DeepSeek 将 ``backend/rag_raw/*.txt`` 整理为结构化种子文本，输出到 ``backend/rag_seed/*_seed.txt``。
+
+用于把原始资料转为适合 RAG 切块的格式；完成后需再运行 ``seed_rag.py`` 入库。
+
+用法::
+
+    python scripts/build_rag_seed.py
+"""
+
 from pathlib import Path
 import re
 import sys
@@ -10,17 +20,34 @@ if str(ROOT) not in sys.path:
 
 from services.deepseek import call_deepseek
 
-
 RAW_DIR = ROOT / "rag_raw"
 SEED_DIR = ROOT / "rag_seed"
 
 
 def _sanitize_filename(name: str) -> str:
+    """
+    将字符串转为安全文件名（去除非法字符）。
+
+    Args:
+        name: 原始词干或标题。
+
+    Returns:
+        可用作文件名的字符串。
+    """
     cleaned = re.sub(r'[\\/:*?"<>|]+', "_", name).strip()
     return cleaned or "rag_seed_generated"
 
 
 def _build_prompt(raw_text: str) -> str:
+    """
+    构造「原始资料 -> 结构化 RAG 种子」的提示词。
+
+    Args:
+        raw_text: 原始文本（过长时截断）。
+
+    Returns:
+        发给模型的完整 user prompt。
+    """
     return f"""
 你是求职知识整理助手。请把下面原始资料整理为可用于 RAG 检索的结构化文本。
 输出必须是纯文本，不要 markdown 代码块，不要多余说明。
@@ -42,6 +69,19 @@ def _build_prompt(raw_text: str) -> str:
 
 
 def transform_one_file(path: Path) -> Path:
+    """
+    对单个 ``rag_raw`` 下的 ``.txt`` 调用 DeepSeek，写入对应 ``*_seed.txt``。
+
+    Args:
+        path: 输入文件路径。
+
+    Returns:
+        输出种子文件路径。
+
+    Raises:
+        ValueError: 输入为空。
+        RuntimeError: 重试后仍失败。
+    """
     raw_text = path.read_text(encoding="utf-8", errors="ignore").strip()
     if not raw_text:
         raise ValueError(f"Empty input file: {path.name}")
@@ -74,6 +114,12 @@ def transform_one_file(path: Path) -> Path:
 
 
 def main() -> None:
+    """
+    批量处理 ``rag_raw`` 中所有 ``.txt`` 文件。
+
+    Returns:
+        None；进度打印到 stdout。
+    """
     load_dotenv(ROOT / ".env")
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     SEED_DIR.mkdir(parents=True, exist_ok=True)

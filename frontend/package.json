@@ -11,6 +11,10 @@
   },
   "dependencies": {
     "axios": "^1.14.0",
+    "live2d-widget-model-haru": "^1.0.5",
+    "live2dcubismcore": "^1.0.2",
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^6.5.10",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.2"

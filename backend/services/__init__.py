@@ -1,1 +1,1 @@
-# Service package marker.
+"""业务逻辑服务包（简历、面试、RAG、LLM 调用等）。"""

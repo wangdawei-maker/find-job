@@ -1,3 +1,13 @@
+"""
+将 ``backend/rag_seed/`` 下所有 ``*_seed.txt`` 读入并写入 RAG 向量库。
+
+依赖 ``backend/.env`` 中的 Embedding 配置；需先安装依赖并在 ``backend`` 包路径下运行。
+
+用法（在 ``backend`` 目录）::
+
+    python scripts/seed_rag.py
+"""
+
 from pathlib import Path
 import sys
 
@@ -10,7 +20,13 @@ if str(ROOT) not in sys.path:
 from services.rag_service import ingest_document_text
 
 
-def main():
+def main() -> None:
+    """
+    扫描 ``rag_seed`` 目录，对每个 ``*_seed.txt`` 调用 ``ingest_document_text``。
+
+    Returns:
+        None；过程信息打印到 stdout。
+    """
     load_dotenv(ROOT / ".env")
     seed_dir = ROOT / "rag_seed"
     files = sorted(seed_dir.glob("*_seed.txt"))
