@@ -3,8 +3,8 @@ FROM alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/alinux3:
 
 WORKDIR /app
 
-# Node 20 二进制来自 npmmirror（国内可达），避免 node:20-alpine 走 registry-1.docker.io
-ENV NODE_VERSION=20.18.1
+# Node 20 LTS：须 >=20.19（Vite 8 / rolldown 的 engines）；20.18 会跳过 linux 原生可选依赖导致构建失败
+ENV NODE_VERSION=20.19.6
 RUN dnf install -y ca-certificates curl tar xz gzip \
     && curl -fsSL "https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
     | tar -xJ -C /usr/local --strip-components=1 \
