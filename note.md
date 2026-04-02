@@ -207,3 +207,89 @@ rag流程:
 rag的来源?
 _build_rag_block()-->retrieve_chunks()-->查询最相似的chunk
 
+---
+
+## Day 3：精读 `interview_service.py`（追问/作答、RAG query）
+
+### 上午（3h）
+1. 通读 `interview_service.py` 的核心分支逻辑：
+   - 什么时候走「向面试官追问」：`detect_ask_interviewer_intent()`（前端 `force_ask_interviewer` + 启发式）
+   - 什么时候走「作答评估」：否则按作答评分分支
+2. 精读 `_build_rag_block()`：
+   - `query` 从哪里来（`interview_chat_with_llm()` 里按分支拼接）
+   - `retrieve_chunks()` 返回的 chunk 如何拼进 `rag_context` 和 `rag_sources`
+3. 精读两条回合的 prompt 拼装：
+   - `_run_answer_turn()`：输出结构化 JSON（reply/score/strengths/improvements）
+   - `_run_ask_interviewer_turn()`：追问模式只输出 `{"reply":"..."}`（不评分）
+
+### 下午（3h）
+1. 打开 `backend/data/app.db`：
+   - 看表结构：`interview_sessions`、`interview_messages`、`rag_documents`、`rag_chunks`（至少把列名扫一遍）
+   - 把你自己的架构草图画出来：路由 -> service -> deepseek -> repo/db（RAG：入库 -> 检索 -> 注入 prompt）
+2. 跟代码理解 `job_match_service`：
+   - 它 prompt 里哪些字段会被当作输入（`target_job` / `experience` / `jd`）
+3. 精读 `interview_repo.py`：
+   - 用 SQLite 看「会话」和「消息」的保存/读取逻辑
+4. 走一遍 RAG 管理相关接口：
+   - 看 `rag_uploads` 目录与 `rag_documents`/索引关系
+   - 跑 `list / delete / retrieve` 的数据链路（至少理解“文件 -> 文本 -> 入库 -> 检索”）
+5. 自己改两小行才开门：
+   - 例如把 `top_k` 改一档、或加一行日志（确保你能在响应/日志里观察到变化）
+   - 然后提交 commit
+6. 写「部署检查清单」10 条：
+   - 端口、`.env`、卷/数据目录、重启方式、是否能访问 `/docs`、是否能初始化 RAG
+7. 听回放/整理卡点，第二天再
+
+---
+
+## Day 4：精读 `rag_service.py` + `rag_repo.py`（入库/检索全链路）
+
+### 上午（3h）
+1. 精读 `rag_service.py`：
+   - `chunk_text()` 怎么切块（chunk_size/overlap）
+   - `embed_text()` 怎么归一化维度（截断/填充到 `VECTOR_DIM=256`）
+   - `ingest_document_text()` 的入库流程（创建文档 -> 每块 embedding -> 写 chunk）
+   - `retrieve_chunks()` 的检索流程（点积/余弦的实现细节 + top_k）
+2. 精读 `rag_repo.py`：
+   - `insert_chunk()`：`embedding` 是怎么 `json.dumps` 存到 `rag_chunks.embedding_json`
+   - `fetch_all_chunks()`：检索侧是如何一次性把向量取出来比对的（MVP 方案）
+
+### 下午（3h，可选）
+1. 自己手工做一轮：
+   - 导入一段短文本（`/api/rag/ingest-text`）
+   - 用 `/api/rag/retrieve` 检索验证 top_k 是否命中你预期的内容
+2. 观察 `rag_sources`（如果用于面试分支）是否符合你导入时的文档来源
+
+---
+
+## Day 5：故障练习（改 `.env` / 停启服务 / 看日志与 Network）
+
+1. 改 `.env` 里至少一个关键配置并重启：
+   - `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`
+   - 或 `EMBEDDING_API_*`（用于 RAG embedding）
+2. 停启服务：
+   - 前后端各自重启一次，确认依赖加载时机是否正确
+3. 看日志与 Network：
+   - 重点看 DeepSeek / Embedding 请求失败时后端返回是什么状态码（500/502/报错细节）
+   - 记录你遇到的“最容易踩坑点”
+
+---
+
+## Day 6：Docker / docker-compose 通读（本地 or 云上启动）
+
+1. 通读 `docker-compose.yml` 与 Dockerfile（如果有）：
+   - 服务端口映射
+   - `backend/data` 的 volume（SQLite 数据是否持久化）
+2. 演练一次：
+   - 本地跑 `docker compose up` 后访问前端与 `/docs`
+3. 记下“需要改的地方”（例如镜像环境变量、初始化 RAG seed、网络策略等）
+
+---
+
+## Day 7：休息半天或轻量任务
+
+1. 录一遍 5 分钟口述（可手机录音）：
+   - 口述你理解的 Day3+Day4：面试追问/作答 + RAG 入库/检索如何注入 prompt
+2. 把“第二天要做什么”写成 3 条：
+   - 例如接入简历诊断 RAG、稳定 prompt JSON 解析、补一条更小的自动化验证
+
