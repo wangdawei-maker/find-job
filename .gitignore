@@ -37,3 +37,7 @@ frontend/.vite/
 coverage/
 .cache/
 *.tmp
+
+# Personal notes & local docs (not committed)
+/note.md
+docs/*.md

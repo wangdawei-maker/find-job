@@ -293,3 +293,5 @@ _build_rag_block()-->retrieve_chunks()-->查询最相似的chunk
 2. 把“第二天要做什么”写成 3 条：
    - 例如接入简历诊断 RAG、稳定 prompt JSON 解析、补一条更小的自动化验证
 
+
+
