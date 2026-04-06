@@ -392,6 +392,106 @@ button:disabled {
   color: #bfdbfe;
 }
 
+/* RAG 导入区：双栏元数据 + 文件 / 粘贴分区 */
+.rag-import-panel,
+.rag-retrieve-panel {
+  grid-column: 1 / -1;
+}
+
+.rag-import-lead {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.rag-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 560px) {
+  .rag-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rag-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rag-field > span {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.rag-field input {
+  margin: 0 !important;
+}
+
+.rag-field-block textarea {
+  margin: 0 !important;
+  min-height: 0;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.rag-import-card {
+  margin-top: 0;
+}
+
+.rag-text-card {
+  margin-top: 0;
+}
+
+.rag-dropzone {
+  min-height: 108px;
+}
+
+.rag-or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0;
+  color: #64748b;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.rag-or-divider::before,
+.rag-or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(51, 65, 85, 0.9), transparent);
+}
+
+.rag-or-divider span {
+  flex-shrink: 0;
+}
+
+.rag-text-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+button.rag-btn-secondary {
+  border-color: #475569;
+  background: linear-gradient(180deg, #334155, #1e293b);
+}
+
+button.rag-btn-secondary:hover:not(:disabled) {
+  border-color: #64748b;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.45);
+}
+
 .upload-card {
   margin-top: 14px;
   border: 1px solid #2f4262;
