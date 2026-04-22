@@ -41,3 +41,5 @@ coverage/
 # Personal notes & local docs (not committed)
 /note.md
 docs/*.md
+!docs/interview-cheatsheet.md
+docs/project-upgrade-roadmap-4-weeks.md

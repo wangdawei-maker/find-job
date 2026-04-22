@@ -180,19 +180,22 @@ def ingest_document_text(
     return len(chunks)
 
 
-def retrieve_chunks(query: str, top_k: int = 3) -> list[dict]:
+def retrieve_chunks(query: str, top_k: int = 3, min_score: float = 0.0) -> list[dict]:
     """
     用查询文本的向量与库中所有 chunk 做点积相似度，返回 Top-K。
 
     Args:
         query: 用户查询或拼接后的检索串。
         top_k: 返回条数，限制在 1～10。
+        min_score: 最小分数阈值（点积）；低于阈值的结果会被过滤。
 
     Returns:
         字典列表，含 ``chunk_id``、``source``、``title``、``text``、``score``（点积分值，越大越靠前）。
     """
     init_rag_tables()
     qv = embed_text(query)
+    top_k_clamped = max(1, min(top_k, 10))
+    min_score_val = float(min_score)
     rows = fetch_all_chunks()
     scored = []
     for row in rows:
@@ -202,6 +205,8 @@ def retrieve_chunks(query: str, top_k: int = 3) -> list[dict]:
         except Exception:
             vec = []
         score = cosine_similarity(qv, vec)
+        if score < min_score_val:
+            continue
         scored.append(
             {
                 "chunk_id": row["id"],
@@ -212,7 +217,7 @@ def retrieve_chunks(query: str, top_k: int = 3) -> list[dict]:
             }
         )
     scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[: max(1, min(top_k, 10))]
+    return scored[:top_k_clamped]
 
 
 def list_rag_documents(limit: int = 50, offset: int = 0) -> list[dict]:

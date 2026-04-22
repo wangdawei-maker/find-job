@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { diagnoseResumeByFile } from '../api'
+import { diagnoseResumeByFile, extractApiErrorMessage } from '../api'
 
 const ACCEPTED_EXTS = ['pdf', 'docx', 'txt']
 const MAX_FILE_SIZE = 8 * 1024 * 1024
@@ -24,7 +24,7 @@ export default function ResumeDiagnosisPage() {
       setUploadProgress(100)
       setUploadDone(true)
     } catch (err) {
-      setError(err?.response?.data?.detail || '文件解析失败，请检查格式后重试')
+      setError(extractApiErrorMessage(err, '文件解析失败，请检查格式后重试'))
       setUploadDone(false)
     } finally {
       setLoading(false)

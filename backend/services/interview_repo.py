@@ -2,7 +2,7 @@
 模拟面试会话与消息的 SQLite 持久化。
 
 数据库文件：``backend/data/app.db``，表 ``interview_sessions``、``interview_messages``。
-消息表含可选评分、亮点/改进 JSON，以及 ``reply_kind``（作答 / 追问面试官）。
+消息表含可选评分、亮点/改进 JSON、RAG 来源 JSON，以及 ``reply_kind``（作答 / 追问面试官）。
 """
 
 import json
@@ -54,6 +54,7 @@ def init_interview_tables() -> None:
                 score INTEGER,
                 strengths_json TEXT,
                 improvements_json TEXT,
+                rag_sources_json TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY(session_id) REFERENCES interview_sessions(session_id)
             )
@@ -70,7 +71,7 @@ def init_interview_tables() -> None:
 
 def _ensure_interview_message_columns(conn: sqlite3.Connection) -> None:
     """
-    若缺少 ``reply_kind`` 列则 ``ALTER TABLE`` 追加（兼容已有数据库）。
+    若缺少 ``reply_kind`` / ``rag_sources_json`` 列则 ``ALTER TABLE`` 追加（兼容已有数据库）。
 
     Args:
         conn: 已打开的数据库连接。
@@ -79,6 +80,8 @@ def _ensure_interview_message_columns(conn: sqlite3.Connection) -> None:
     names = {row["name"] for row in rows}
     if "reply_kind" not in names:
         conn.execute("ALTER TABLE interview_messages ADD COLUMN reply_kind TEXT DEFAULT 'answer'")
+    if "rag_sources_json" not in names:
+        conn.execute("ALTER TABLE interview_messages ADD COLUMN rag_sources_json TEXT")
 
 
 def ensure_session(job_title: str, session_id: str | None = None) -> str:
@@ -118,6 +121,7 @@ def save_message(
     score: int | None = None,
     strengths: list[str] | None = None,
     improvements: list[str] | None = None,
+    rag_sources: list[str] | None = None,
     reply_kind: str = "answer",
 ) -> None:
     """
@@ -130,13 +134,16 @@ def save_message(
         score: 作答回合评分；用户消息或追问回合可为 ``None``。
         strengths: 亮点列表，存为 JSON。
         improvements: 改进建议列表，存为 JSON。
+        rag_sources: 检索来源列表（如 ``source (score=...)``），存为 JSON。
         reply_kind: ``answer``（默认）或 ``ask_interviewer``（追问答复）。
     """
     with _get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO interview_messages(session_id, role, content, score, strengths_json, improvements_json, reply_kind)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO interview_messages(
+                session_id, role, content, score, strengths_json, improvements_json, rag_sources_json, reply_kind
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -145,6 +152,7 @@ def save_message(
                 score,
                 json.dumps(strengths or [], ensure_ascii=False),
                 json.dumps(improvements or [], ensure_ascii=False),
+                json.dumps(rag_sources or [], ensure_ascii=False),
                 reply_kind,
             ),
         )
@@ -163,7 +171,7 @@ def get_history(session_id: str) -> tuple[str | None, list[dict]]:
 
     Returns:
         ``(job_title, messages)``。会话不存在时 ``job_title`` 为 ``None``，``messages`` 为空列表。
-        每条 message 含 ``role``、``content``、``score``、``strengths``、``improvements``、
+        每条 message 含 ``role``、``content``、``score``、``strengths``、``improvements``、``rag_sources``、
         ``created_at``、``reply_kind``。
     """
     with _get_conn() as conn:
@@ -173,7 +181,7 @@ def get_history(session_id: str) -> tuple[str | None, list[dict]]:
         ).fetchone()
         rows = conn.execute(
             """
-            SELECT role, content, score, strengths_json, improvements_json, created_at, reply_kind
+            SELECT role, content, score, strengths_json, improvements_json, rag_sources_json, created_at, reply_kind
             FROM interview_messages
             WHERE session_id = ?
             ORDER BY id ASC
@@ -191,6 +199,7 @@ def get_history(session_id: str) -> tuple[str | None, list[dict]]:
                 "score": row["score"],
                 "strengths": json.loads(row["strengths_json"] or "[]"),
                 "improvements": json.loads(row["improvements_json"] or "[]"),
+                "rag_sources": json.loads(row["rag_sources_json"] or "[]"),
                 "created_at": row["created_at"],
                 "reply_kind": rk or "answer",
             }

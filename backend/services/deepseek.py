@@ -1,8 +1,9 @@
 """
-DeepSeek 聊天补全封装。
+LLM 聊天补全封装（DeepSeek / Ollama 可切换）。
 
-从环境变量读取 ``DEEPSEEK_API_KEY``、``DEEPSEEK_BASE_URL``、``DEEPSEEK_MODEL``，
-使用与 OpenAI Chat Completions 兼容的 HTTP 接口调用模型。
+通过 ``LLM_PROVIDER`` 选择模型提供方：
+- ``deepseek``（默认）：走 OpenAI 兼容 Chat Completions。
+- ``ollama``：走本地 Ollama ``/api/chat``。
 """
 
 import json
@@ -43,20 +44,35 @@ def call_deepseek(
     messages: list[dict],
     temperature: float = 0.3,
     timeout_seconds: float | None = None,
+    provider_override: str | None = None,
 ) -> str:
     """
-    调用 DeepSeek Chat Completions，返回助手消息正文。
+    调用配置的 LLM 提供方，返回助手消息正文。
 
     Args:
         messages: OpenAI 格式的消息列表，每项含 ``role``、``content``。
         temperature: 采样温度，越高越随机。
-        timeout_seconds: 请求超时（秒）；为 ``None`` 时使用 ``DEEPSEEK_TIMEOUT_SECONDS`` 环境变量，默认 40。
+        timeout_seconds: 请求超时（秒）；为 ``None`` 时按 provider 读取对应环境变量。
 
     Returns:
         模型回复的纯文本内容。
 
     Raises:
-        HTTPException: 未配置 API Key、HTTP 错误或响应结构异常时抛出。
+        HTTPException: 配置缺失、HTTP 错误或响应结构异常时抛出。
+    """
+    provider = (provider_override or os.getenv("LLM_PROVIDER", "deepseek")).strip().lower()
+    if provider == "ollama":
+        return _call_ollama(messages=messages, temperature=temperature, timeout_seconds=timeout_seconds)
+    return _call_deepseek(messages=messages, temperature=temperature, timeout_seconds=timeout_seconds)
+
+
+def _call_deepseek(
+    messages: list[dict],
+    temperature: float = 0.3,
+    timeout_seconds: float | None = None,
+) -> str:
+    """
+    调用 DeepSeek Chat Completions，返回助手消息正文。
     """
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
@@ -93,3 +109,39 @@ def call_deepseek(
         raise HTTPException(status_code=502, detail=f"DeepSeek request failed: {exc}") from exc
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="DeepSeek response format invalid") from exc
+
+
+def _call_ollama(
+    messages: list[dict],
+    temperature: float = 0.3,
+    timeout_seconds: float | None = None,
+) -> str:
+    """
+    调用本地 Ollama ``/api/chat``，返回助手消息正文。
+    """
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
+    model = os.getenv("OLLAMA_MODEL", "qwen3.5:7b").strip()
+    endpoint = f"{base_url.rstrip('/')}/api/chat"
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+        },
+    }
+
+    request_timeout = timeout_seconds
+    if request_timeout is None:
+        request_timeout = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
+
+    try:
+        with httpx.Client(timeout=request_timeout) as client:
+            resp = client.post(endpoint, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        return str(data["message"]["content"])
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama request failed: {exc}") from exc
+    except (KeyError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="Ollama response format invalid") from exc

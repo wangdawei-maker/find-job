@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from schemas import (
@@ -19,6 +20,9 @@ from schemas import (
     InterviewSessionSummary,
     InterviewChatRequest,
     InterviewChatResponse,
+    InterviewCompareItem,
+    InterviewCompareRequest,
+    InterviewCompareResponse,
     JobMatchRequest,
     JobMatchResponse,
     ResumeDiagnosisRequest,
@@ -32,6 +36,8 @@ from schemas import (
     RagDocumentListResponse,
     RagDeleteResponse,
     RagClearResponse,
+    LlmProviderUpdateRequest,
+    LlmProviderResponse,
 )
 from services.interview_repo import (
     delete_session,
@@ -58,6 +64,42 @@ init_interview_tables()
 RAG_UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "rag_uploads"
 
 
+def _bad_request(message: str, code: str = "bad_request", hint: str | None = None) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"code": code, "message": message, "hint": hint},
+    )
+
+
+def _ensure_ollama_ready() -> None:
+    """
+    切换 provider 前检查 Ollama 服务可用性与目标模型是否已安装。
+    """
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip().rstrip("/")
+    model = os.getenv("OLLAMA_MODEL", "qwen3.5:7b").strip()
+    timeout_seconds = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
+
+    try:
+        with httpx.Client(timeout=min(timeout_seconds, 5.0)) as client:
+            tags_resp = client.get(f"{base_url}/api/tags")
+            tags_resp.raise_for_status()
+            models = tags_resp.json().get("models", [])
+    except Exception as exc:
+        raise _bad_request(
+            "Ollama 服务不可用，无法切换到 ollama",
+            code="ollama_unavailable",
+            hint=f"请确认 {base_url} 可访问且已启动 Ollama（error: {exc}）",
+        ) from exc
+
+    names = {str(item.get("name", "")) for item in models}
+    if model not in names:
+        raise _bad_request(
+            "Ollama 模型未安装，无法切换到 ollama",
+            code="ollama_model_missing",
+            hint=f"请先执行 `ollama pull {model}`，当前已安装：{', '.join(sorted(names)) or '无'}",
+        )
+
+
 @router.get("/health")
 def health():
     """
@@ -67,6 +109,48 @@ def health():
         ``{"ok": true, "deepseek_configured": bool}``，便于排查是否配置 API Key。
     """
     return {"ok": True, "deepseek_configured": bool(os.getenv("DEEPSEEK_API_KEY"))}
+
+
+@router.get("/healthz")
+def healthz():
+    """
+    扩展健康检查（含版本与简单依赖状态）。
+
+    Returns:
+        ``{"ok": true, "status": "healthy", "version": "...", ...}``。
+    """
+    return {
+        "ok": True,
+        "status": "healthy",
+        "version": "0.1.0",
+        "deepseek_configured": bool(os.getenv("DEEPSEEK_API_KEY")),
+        "llm_provider": os.getenv("LLM_PROVIDER", "deepseek").strip().lower() or "deepseek",
+    }
+
+
+@router.get("/llm/provider", response_model=LlmProviderResponse)
+def get_llm_provider():
+    """
+    获取当前 LLM 提供方（运行时）。
+    """
+    provider = os.getenv("LLM_PROVIDER", "deepseek").strip().lower() or "deepseek"
+    if provider not in {"deepseek", "ollama"}:
+        provider = "deepseek"
+    return LlmProviderResponse(provider=provider)
+
+
+@router.post("/llm/provider", response_model=LlmProviderResponse)
+def set_llm_provider(payload: LlmProviderUpdateRequest):
+    """
+    切换当前 LLM 提供方（运行时生效，重启后以 .env 为准）。
+    """
+    provider = payload.provider.strip().lower()
+    if provider not in {"deepseek", "ollama"}:
+        raise _bad_request("provider 仅支持 deepseek 或 ollama", code="llm_provider_invalid")
+    if provider == "ollama":
+        _ensure_ollama_ready()
+    os.environ["LLM_PROVIDER"] = provider
+    return LlmProviderResponse(provider=provider)
 
 
 @router.post("/resume-diagnosis", response_model=ResumeDiagnosisResponse)
@@ -98,18 +182,23 @@ async def resume_diagnosis_upload(file: UploadFile = File(...)):
         HTTPException: 文件名空、过大、解析失败或文本过短。
     """
     if not file.filename:
-        raise HTTPException(status_code=400, detail="文件名为空")
+        raise _bad_request("文件名为空", code="upload_filename_missing", hint="请重新选择文件后上传")
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="上传文件为空")
+        raise _bad_request("上传文件为空", code="upload_empty_file", hint="请确认文件内容后重试")
     if len(content) > 8 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="文件大小超过 8MB，请压缩后再上传")
+        raise _bad_request(
+            "文件大小超过 8MB，请压缩后再上传",
+            code="upload_file_too_large",
+            hint="建议删减附件页或导出纯文本版 PDF/docx",
+        )
 
     text = extract_resume_text(file.filename, content)
     if len(text.strip()) < 10:
-        raise HTTPException(
-            status_code=400,
-            detail="提取到的文本过少：该文件可能是扫描图片版 PDF，建议导出可复制文本的 PDF 或 docx",
+        raise _bad_request(
+            "提取到的文本过少：该文件可能是扫描图片版 PDF",
+            code="upload_text_too_short",
+            hint="建议导出可复制文本的 PDF 或 docx",
         )
     return resume_suggestions_from_text(text[:12000])
 
@@ -158,9 +247,59 @@ def interview_chat(payload: InterviewChatRequest):
         score=result.score,
         strengths=result.strengths,
         improvements=result.improvements,
+        rag_sources=result.rag_sources,
         reply_kind=result.turn_mode,
     )
+    if not payload.debug:
+        result.rag_sources = []
     return result
+
+
+@router.post("/interview/chat-compare", response_model=InterviewCompareResponse)
+def interview_chat_compare(payload: InterviewCompareRequest):
+    """
+    模拟面试 A/B 对比：同一输入分别调用不同 provider，不写入历史。
+    """
+    session_id = payload.session_id or f"ab_{uuid4().hex}"
+    providers = payload.providers or ["deepseek", "ollama"]
+    deduped = []
+    for p in providers:
+        if p not in deduped:
+            deduped.append(p)
+
+    base_request = InterviewChatRequest(
+        job_title=payload.job_title,
+        messages=payload.messages,
+        session_id=payload.session_id,
+        debug=payload.debug,
+        force_ask_interviewer=payload.force_ask_interviewer,
+    )
+    results: list[InterviewCompareItem] = []
+    for provider in deduped:
+        try:
+            item = interview_chat_with_llm(base_request, session_id=session_id, llm_provider=provider)
+            if not payload.debug:
+                item.rag_sources = []
+            results.append(
+                InterviewCompareItem(
+                    provider=provider,
+                    turn_mode=item.turn_mode,
+                    reply=item.reply,
+                    score=item.score,
+                    strengths=item.strengths,
+                    improvements=item.improvements,
+                    rag_sources=item.rag_sources,
+                )
+            )
+        except HTTPException as exc:
+            results.append(
+                InterviewCompareItem(
+                    provider=provider,
+                    error=str(exc.detail),
+                )
+            )
+
+    return InterviewCompareResponse(session_id=session_id, results=results)
 
 
 @router.get("/interview/history/{session_id}", response_model=InterviewHistoryResponse)
@@ -272,18 +411,26 @@ async def rag_ingest_file(
         HTTPException: 校验或解析失败。
     """
     if not file.filename:
-        raise HTTPException(status_code=400, detail="文件名为空")
+        raise _bad_request("文件名为空", code="upload_filename_missing", hint="请重新选择文件后上传")
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="上传文件为空")
+        raise _bad_request("上传文件为空", code="upload_empty_file", hint="请确认文件内容后重试")
     if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="文件大小超过 10MB，请压缩后再上传")
+        raise _bad_request(
+            "文件大小超过 10MB，请压缩后再上传",
+            code="upload_file_too_large",
+            hint="建议拆分文档后分批导入",
+        )
 
     clean_source = (source or "upload").strip()
     clean_title = (title or "").strip() or Path(file.filename).stem
     text = extract_resume_text(file.filename, content)
     if len(text.strip()) < 20:
-        raise HTTPException(status_code=400, detail="提取到的文本过少，暂不建议入库")
+        raise _bad_request(
+            "提取到的文本过少，暂不建议入库",
+            code="upload_text_too_short",
+            hint="请上传可复制文本的 PDF/docx/txt/md",
+        )
 
     safe_name = Path(file.filename).name
     save_name = f"{uuid4().hex}_{safe_name}"
@@ -314,9 +461,13 @@ def rag_retrieve(payload: RagRetrieveRequest):
     Returns:
         Top-K chunk 及相似度分值。
     """
-    chunks = retrieve_chunks(query=payload.query, top_k=payload.top_k)
+    top_k = max(1, min(payload.top_k, 10))
+    min_score = float(payload.min_score)
+    chunks = retrieve_chunks(query=payload.query, top_k=top_k, min_score=min_score)
     return RagRetrieveResponse(
         query=payload.query,
+        top_k=top_k,
+        min_score=min_score,
         chunks=[RagChunk(**item) for item in chunks],
     )
 

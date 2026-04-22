@@ -69,6 +69,19 @@ class InterviewChatRequest(BaseModel):
     """为 True 时本回合强制按「向面试官追问」处理，不参与作答评分。"""
 
 
+class InterviewCompareRequest(BaseModel):
+    """模拟面试 A/B 对比请求（不落库）。"""
+
+    job_title: str
+    messages: List[ChatMessage]
+    session_id: Optional[str] = None
+    debug: bool = False
+    force_ask_interviewer: bool = False
+    providers: List[Literal["deepseek", "ollama"]] = Field(
+        default_factory=lambda: ["deepseek", "ollama"]
+    )
+
+
 class InterviewChatResponse(BaseModel):
     """模拟面试单轮响应。"""
 
@@ -88,6 +101,26 @@ class InterviewChatResponse(BaseModel):
     """debug 为 True 时的 RAG 来源列表。"""
 
 
+class InterviewCompareItem(BaseModel):
+    """单个 provider 的对比结果。"""
+
+    provider: Literal["deepseek", "ollama"]
+    turn_mode: Literal["answer", "ask_interviewer"] = "answer"
+    reply: str = ""
+    score: Optional[int] = None
+    strengths: List[str] = Field(default_factory=list)
+    improvements: List[str] = Field(default_factory=list)
+    rag_sources: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class InterviewCompareResponse(BaseModel):
+    """A/B 对比响应。"""
+
+    session_id: str
+    results: List[InterviewCompareItem]
+
+
 class InterviewHistoryItem(BaseModel):
     """历史中的一条消息。"""
 
@@ -96,6 +129,8 @@ class InterviewHistoryItem(BaseModel):
     score: Optional[int] = None
     strengths: List[str] = Field(default_factory=list)
     improvements: List[str] = Field(default_factory=list)
+    rag_sources: List[str] = Field(default_factory=list)
+    """该轮回答检索命中的来源摘要。"""
     created_at: str
     reply_kind: Literal["answer", "ask_interviewer"] = "answer"
     """与 ``turn_mode`` 对应，用于前端区分是否展示评分区。"""
@@ -155,6 +190,8 @@ class RagRetrieveRequest(BaseModel):
     query: str
     top_k: int = 3
     """返回前 K 条，服务端还会做上下限裁剪。"""
+    min_score: float = 0.0
+    """最小相似度阈值（点积）；低于该值的 chunk 将被过滤。"""
 
 
 class RagChunk(BaseModel):
@@ -172,6 +209,8 @@ class RagRetrieveResponse(BaseModel):
     """RAG 检索响应。"""
 
     query: str
+    top_k: int
+    min_score: float
     chunks: List[RagChunk]
 
 
@@ -211,3 +250,16 @@ class RagClearResponse(BaseModel):
     ok: bool
     documents_deleted: int
     chunks_deleted: int
+
+
+class LlmProviderUpdateRequest(BaseModel):
+    """切换当前 LLM 提供方。"""
+
+    provider: Literal["deepseek", "ollama"]
+
+
+class LlmProviderResponse(BaseModel):
+    """当前 LLM 提供方信息。"""
+
+    provider: Literal["deepseek", "ollama"]
+    options: List[str] = Field(default_factory=lambda: ["deepseek", "ollama"])

@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import {
   chatInterview,
+  chatInterviewCompare,
   deleteInterviewSession,
   getInterviewHistory,
+  getLlmProvider,
   getInterviewSessions,
+  setLlmProvider,
 } from '../api'
 
 const PAGE_SIZE = 10
@@ -26,7 +29,12 @@ export default function InterviewPage() {
   const [loading, setLoading] = useState(false)
   const [debugRag, setDebugRag] = useState(false)
   const [forceAskInterviewer, setForceAskInterviewer] = useState(false)
+  const [abCompare, setAbCompare] = useState(false)
   const [messages, setMessages] = useState([INITIAL_ASSISTANT_MESSAGE])
+  const [openRagRefKeys, setOpenRagRefKeys] = useState({})
+  const [llmProvider, setLlmProviderState] = useState('deepseek')
+  const [llmSwitching, setLlmSwitching] = useState(false)
+  const [llmProviderNotice, setLlmProviderNotice] = useState('')
 
   const loadSessions = async ({ reset = false } = {}) => {
     const offset = reset ? 0 : sessionOffset
@@ -39,6 +47,11 @@ export default function InterviewPage() {
 
   useEffect(() => {
     loadSessions({ reset: true }).catch(() => {})
+    getLlmProvider()
+      .then((data) => {
+        if (data?.provider) setLlmProviderState(data.provider)
+      })
+      .catch(() => {})
     // 产品行为：每次进入页面默认开启新会话，不自动恢复旧会话。
     startNewSession()
   }, [])
@@ -56,6 +69,7 @@ export default function InterviewPage() {
         data.messages?.length
           ? data.messages.map((m) => ({
               ...m,
+              ragSources: m.rag_sources || [],
               replyKind: m.reply_kind || 'answer',
             }))
           : [INITIAL_ASSISTANT_MESSAGE],
@@ -92,6 +106,28 @@ export default function InterviewPage() {
     setInput('')
     setLoading(true)
     try {
+      if (abCompare) {
+        const data = await chatInterviewCompare(
+          jobTitle,
+          nextMessages,
+          sessionId || undefined,
+          debugRag,
+          forceAskInterviewer,
+          ['deepseek', 'ollama'],
+        )
+        const compareMessages = (data.results || []).map((item) => ({
+          role: 'assistant',
+          content: item.error ? `[${item.provider}] ${item.error}` : `[${item.provider}] ${item.reply}`,
+          score: item.score,
+          strengths: item.strengths || [],
+          improvements: item.improvements || [],
+          ragSources: item.rag_sources || [],
+          replyKind: item.turn_mode || 'answer',
+        }))
+        setMessages((prev) => [...prev, ...compareMessages])
+        setForceAskInterviewer(false)
+        return
+      }
       const data = await chatInterview(
         jobTitle,
         nextMessages,
@@ -123,6 +159,26 @@ export default function InterviewPage() {
     }
   }
 
+  const toggleRagRefs = (key) => {
+    setOpenRagRefKeys((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const handleProviderChange = async (nextProvider) => {
+    if (!nextProvider || nextProvider === llmProvider) return
+    setLlmSwitching(true)
+    setLlmProviderNotice('')
+    try {
+      const data = await setLlmProvider(nextProvider)
+      setLlmProviderState(data.provider)
+      setLlmProviderNotice(`模型已切换为 ${data.provider}`)
+    } catch {
+      setLlmProviderNotice('模型切换失败，请检查后端服务状态')
+    } finally {
+      setLlmSwitching(false)
+      setTimeout(() => setLlmProviderNotice(''), 1800)
+    }
+  }
+
   return (
     <section>
       <h2>模拟面试</h2>
@@ -144,23 +200,43 @@ export default function InterviewPage() {
         <button type="button" onClick={handleDeleteSession} disabled={!sessionId}>
           删除会话
         </button>
-        <label className="debug-toggle">
+        <label className="provider-picker">
+          <span>模型</span>
+          <select
+            value={llmProvider}
+            disabled={llmSwitching}
+            onChange={(e) => handleProviderChange(e.target.value)}
+          >
+            <option value="deepseek">deepseek</option>
+            <option value="ollama">ollama</option>
+          </select>
+        </label>
+        <label className="debug-toggle switch-toggle">
           <input
             type="checkbox"
             checked={debugRag}
             onChange={(e) => setDebugRag(e.target.checked)}
           />
-          显示RAG来源
+          <span>显示RAG来源</span>
         </label>
-        <label className="debug-toggle" title="勾选后本句强制视为向面试官追问，不评分">
+        <label className="debug-toggle switch-toggle" title="勾选后本句强制视为向面试官追问，不评分">
           <input
             type="checkbox"
             checked={forceAskInterviewer}
             onChange={(e) => setForceAskInterviewer(e.target.checked)}
           />
-          本句追问面试官
+          <span>本句追问面试官</span>
+        </label>
+        <label className="debug-toggle switch-toggle" title="同一输入同时请求 deepseek 与 ollama，便于对比输出">
+          <input
+            type="checkbox"
+            checked={abCompare}
+            onChange={(e) => setAbCompare(e.target.checked)}
+          />
+          <span>A/B模型对比</span>
         </label>
       </div>
+      {llmProviderNotice && <p className="muted">{llmProviderNotice}</p>}
       {hasMoreSessions && (
         <button type="button" onClick={() => loadSessions()} className="load-more-btn">
           加载更多历史
@@ -175,9 +251,6 @@ export default function InterviewPage() {
               {msg.role === 'assistant' && msg.replyKind === 'ask_interviewer' && (
                 <div className="interview-ask-meta">
                   <p className="interview-ask-badge">追问答复（未评分）</p>
-                  {msg.ragSources?.length > 0 && (
-                    <p className="muted">来源：{msg.ragSources.join('；')}</p>
-                  )}
                 </div>
               )}
               {msg.role === 'assistant' && msg.replyKind === 'answer' && msg.score !== null && (
@@ -187,8 +260,25 @@ export default function InterviewPage() {
                   </p>
                   <p>亮点：{msg.strengths.join('；')}</p>
                   <p>改进：{msg.improvements.join('；')}</p>
-                  {msg.ragSources?.length > 0 && (
-                    <p>来源：{msg.ragSources.join('；')}</p>
+                </div>
+              )}
+              {msg.role === 'assistant' && debugRag && msg.ragSources?.length > 0 && (
+                <div className="rag-ref-wrap">
+                  <button
+                    type="button"
+                    className="rag-ref-btn"
+                    onClick={() => toggleRagRefs(`${msg.replyKind}-${idx}`)}
+                  >
+                    {openRagRefKeys[`${msg.replyKind}-${idx}`]
+                      ? '收起AI参考资料'
+                      : `查看AI参考资料（${msg.ragSources.length}）`}
+                  </button>
+                  {openRagRefKeys[`${msg.replyKind}-${idx}`] && (
+                    <ul className="rag-ref-list">
+                      {msg.ragSources.map((item) => (
+                        <li key={`${idx}-${item}`}>{item}</li>
+                      ))}
+                    </ul>
                   )}
                 </div>
               )}

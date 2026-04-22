@@ -12,6 +12,7 @@ RAG 片段注入两种分支的 prompt，便于结合 JD/知识库回答。
 import logging
 import os
 import re
+import json
 
 from schemas import InterviewChatRequest, InterviewChatResponse
 from services.deepseek import call_deepseek, extract_json_obj
@@ -115,6 +116,22 @@ def _build_rag_block(query: str) -> tuple[str, list[str]]:
     return rag_context, rag_sources
 
 
+def _extract_reply_fallback(text: str) -> str:
+    """
+    兜底从文本中提取 ``reply`` 字段，避免将整段 JSON 原样回显给前端。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    m = re.search(r'"reply"\s*:\s*"((?:\\.|[^"])*)"', raw, re.DOTALL)
+    if not m:
+        return ""
+    try:
+        return json.loads(f'"{m.group(1)}"').strip()
+    except Exception:
+        return m.group(1).strip()
+
+
 def _run_answer_turn(
     payload: InterviewChatRequest,
     session_id: str,
@@ -149,7 +166,7 @@ def _run_answer_turn(
             "role": "user",
             "content": (
                 f"当前应聘岗位：{payload.job_title}。"
-                f"\n可参考知识片段（若为空则忽略）：\n{rag_context or '无'}\n"
+                f"\n可参考知识片段（若为空则忽略；若与本轮用户回答、岗位或面试主题明显无关，也视为无有效参考，勿强行引用或据此编造点评）：\n{rag_context or '无'}\n"
                 "请只针对我「最近一次」用户回答做评估，并给出下一题。"
                 "评分 score 必须按以下维度综合打分（0-100 整数；不要固定给 80、85、90 这类常见分数）："
                 "相关性（是否答到点）、完整性（结构/要点）、证据性（是否有具体项目/数据/结果）、"
@@ -189,7 +206,7 @@ def _run_ask_interviewer_turn(
         "你是中文技术面试官，正在面试候选人。"
         "候选人本轮是在向你提问（岗位、团队、流程、技术栈、工作方式等），不是在回答面试题。"
         "要求：\n"
-        "1) 仅结合对话历史与参考知识作答；参考知识为空或不足时，明确说明公开信息未提及，建议其向 HR 或现场面试官确认。\n"
+        "1) 仅结合对话历史与参考知识作答；参考知识为空、不足或与候选人问题明显无关时，明确说明公开信息未提及，建议其向 HR 或现场面试官确认。\n"
         "2) 禁止编造内部制度、具体薪资数字、未公开的团队规模等。\n"
         "3) 回答简洁专业，优先 200 字以内。\n"
         "4) 结尾用一句话把对话拉回面试，例如邀请其继续回答你上一轮提出的面试问题（可简要复述该问题）。\n"
@@ -205,7 +222,7 @@ def _run_ask_interviewer_turn(
             "content": (
                 f"当前应聘岗位：{payload.job_title}。\n{hint}\n"
                 f"候选人追问：{latest_user_text}\n"
-                f"可参考知识片段（若为空则忽略）：\n{rag_context or '无'}\n"
+                f"可参考知识片段（若为空则忽略；若与候选人追问、岗位或面试主题明显无关，也视为无有效参考，勿强行引用或编造）：\n{rag_context or '无'}\n"
                 "请作为面试官直接回复候选人。"
             ),
         }
@@ -213,7 +230,11 @@ def _run_ask_interviewer_turn(
     return chat_messages
 
 
-def interview_chat_with_llm(payload: InterviewChatRequest, session_id: str) -> InterviewChatResponse:
+def interview_chat_with_llm(
+    payload: InterviewChatRequest,
+    session_id: str,
+    llm_provider: str | None = None,
+) -> InterviewChatResponse:
     """
     模拟面试核心：根据回合类型调用 DeepSeek，返回结构化响应。
 
@@ -258,14 +279,18 @@ def interview_chat_with_llm(payload: InterviewChatRequest, session_id: str) -> I
         )
         logger.warning("Interview prompt tail:\n%s", prompt_tail)
 
-    content = call_deepseek(chat_messages, temperature=0.55 if is_ask else 0.6)
+    content = call_deepseek(
+        chat_messages,
+        temperature=0.55 if is_ask else 0.6,
+        provider_override=llm_provider,
+    )
 
     if is_ask:
         try:
             parsed = extract_json_obj(content)
             reply = str(parsed.get("reply", "")).strip() or "这个问题我这边没有更细的公开信息，建议你向 HR 确认。我们先回到面试，请你继续说说上一题的思路。"
         except Exception:
-            reply = content.strip() or "我们先回到面试，请你继续完成上一题的回答。"
+            reply = _extract_reply_fallback(content) or content.strip() or "我们先回到面试，请你继续完成上一题的回答。"
         return InterviewChatResponse(
             session_id=session_id,
             turn_mode="ask_interviewer",
@@ -273,7 +298,7 @@ def interview_chat_with_llm(payload: InterviewChatRequest, session_id: str) -> I
             score=None,
             strengths=[],
             improvements=[],
-            rag_sources=rag_sources if payload.debug else [],
+            rag_sources=rag_sources,
         )
 
     try:
@@ -294,15 +319,15 @@ def interview_chat_with_llm(payload: InterviewChatRequest, session_id: str) -> I
             score=score,
             strengths=strengths,
             improvements=improvements,
-            rag_sources=rag_sources if payload.debug else [],
+            rag_sources=rag_sources,
         )
     except Exception:
         return InterviewChatResponse(
             session_id=session_id,
             turn_mode="answer",
-            reply=content.strip() or "请继续介绍一个你最有代表性的项目经历。",
+            reply=_extract_reply_fallback(content) or content.strip() or "请继续介绍一个你最有代表性的项目经历。",
             score=70,
             strengths=["回答有一定条理。"],
             improvements=["建议使用 STAR 结构并加入量化结果。"],
-            rag_sources=rag_sources if payload.debug else [],
+            rag_sources=rag_sources,
         )

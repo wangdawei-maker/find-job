@@ -8,6 +8,19 @@ const api = axios.create({
   timeout: 60000,
 })
 
+export const extractApiErrorMessage = (err, fallback = '请求失败，请稍后重试。') => {
+  const payload = err?.response?.data
+  const structured = payload?.error
+  if (structured) {
+    const message = structured.message || fallback
+    const hint = structured.hint ? `（${structured.hint}）` : ''
+    return `${message}${hint}`
+  }
+  if (typeof payload?.detail === 'string' && payload.detail.trim()) return payload.detail
+  if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message
+  return fallback
+}
+
 export const diagnoseResume = async (experience) => {
   const { data } = await api.post(
     '/resume-diagnosis',
@@ -58,6 +71,35 @@ export const chatInterview = async (
   return data
 }
 
+export const chatInterviewCompare = async (
+  jobTitle,
+  messages,
+  sessionId,
+  debug = false,
+  forceAskInterviewer = false,
+  providers = ['deepseek', 'ollama'],
+) => {
+  const { data } = await api.post('/interview/chat-compare', {
+    job_title: jobTitle,
+    messages,
+    session_id: sessionId,
+    debug,
+    force_ask_interviewer: forceAskInterviewer,
+    providers,
+  })
+  return data
+}
+
+export const getLlmProvider = async () => {
+  const { data } = await api.get('/llm/provider')
+  return data
+}
+
+export const setLlmProvider = async (provider) => {
+  const { data } = await api.post('/llm/provider', { provider })
+  return data
+}
+
 export const getInterviewHistory = async (sessionId) => {
   const { data } = await api.get(`/interview/history/${sessionId}`)
   return data
@@ -90,8 +132,8 @@ export const ingestRagFile = async (file, source = 'upload', title = '') => {
   return data
 }
 
-export const retrieveRag = async (query, topK = 3) => {
-  const { data } = await api.post('/rag/retrieve', { query, top_k: topK })
+export const retrieveRag = async (query, topK = 3, minScore = 0) => {
+  const { data } = await api.post('/rag/retrieve', { query, top_k: topK, min_score: minScore })
   return data
 }
 

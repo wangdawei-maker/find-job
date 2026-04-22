@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   clearRagDocuments,
   deleteRagDocument,
+  extractApiErrorMessage,
   ingestRagFile,
   ingestRagText,
   listRagDocuments,
@@ -13,6 +14,8 @@ export default function RagAdminPage() {
   const [title, setTitle] = useState('')
   const [text, setText] = useState('')
   const [query, setQuery] = useState('')
+  const [topK, setTopK] = useState(5)
+  const [minScore, setMinScore] = useState(0)
   const [uploadFile, setUploadFile] = useState(null)
   const [docs, setDocs] = useState([])
   const [retrieved, setRetrieved] = useState([])
@@ -62,7 +65,7 @@ export default function RagAdminPage() {
       setText('')
       await loadDocs()
     } catch (err) {
-      setMessage(err?.response?.data?.detail || '导入失败，请检查 embedding 配置。')
+      setMessage(extractApiErrorMessage(err, '导入失败，请检查 embedding 配置。'))
     } finally {
       setLoading(false)
     }
@@ -76,11 +79,13 @@ export default function RagAdminPage() {
     setLoading(true)
     setMessage('')
     try {
-      const data = await retrieveRag(query.trim(), 5)
+      const data = await retrieveRag(query.trim(), topK, minScore)
       setRetrieved(data.chunks || [])
-      if (!data.chunks?.length) setMessage('未检索到结果。')
-    } catch {
-      setMessage('检索失败，请稍后重试。')
+      if (!data.chunks?.length) {
+        setMessage(`未检索到结果（top_k=${data.top_k}, min_score=${data.min_score}）。`)
+      }
+    } catch (err) {
+      setMessage(extractApiErrorMessage(err, '检索失败，请稍后重试。'))
     } finally {
       setLoading(false)
     }
@@ -100,7 +105,7 @@ export default function RagAdminPage() {
       if (fileInputRef.current) fileInputRef.current.value = ''
       await loadDocs()
     } catch (err) {
-      setMessage(err?.response?.data?.detail || '文件导入失败，请检查文件格式。')
+      setMessage(extractApiErrorMessage(err, '文件导入失败，请检查文件格式。'))
     } finally {
       setLoading(false)
     }
@@ -113,8 +118,8 @@ export default function RagAdminPage() {
     try {
       await deleteRagDocument(id)
       setDocs((prev) => prev.filter((d) => d.id !== id))
-    } catch {
-      setMessage('删除失败，请稍后重试。')
+    } catch (err) {
+      setMessage(extractApiErrorMessage(err, '删除失败，请稍后重试。'))
     } finally {
       setLoading(false)
     }
@@ -129,8 +134,8 @@ export default function RagAdminPage() {
       setRetrieved([])
       setDocs([])
       setMessage(`已清空：documents ${data.documents_deleted}，chunks ${data.chunks_deleted}`)
-    } catch {
-      setMessage('清空失败，请稍后重试。')
+    } catch (err) {
+      setMessage(extractApiErrorMessage(err, '清空失败，请稍后重试。'))
     } finally {
       setLoading(false)
     }
@@ -238,8 +243,31 @@ export default function RagAdminPage() {
         <div className="rag-panel rag-retrieve-panel">
           <h3>检索测试</h3>
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="输入 query 验证召回质量" />
+          <div className="rag-meta-grid">
+            <label className="rag-field">
+              <span>top_k（1-10）</span>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                step={1}
+                value={topK}
+                onChange={(e) => setTopK(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+              />
+            </label>
+            <label className="rag-field">
+              <span>min_score</span>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={minScore}
+                onChange={(e) => setMinScore(Math.max(0, Number(e.target.value) || 0))}
+              />
+            </label>
+          </div>
           <button type="button" onClick={onRetrieve} disabled={loading}>
-            {loading ? '检索中...' : '检索 Top-5'}
+            {loading ? '检索中...' : `检索 Top-${topK}`}
           </button>
           <div className="rag-results">
             {retrieved.map((item) => (
